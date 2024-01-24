@@ -1,26 +1,27 @@
+%%cuda
 #include <stdio.h>
 #include <cuda_runtime.h>
 
 
-// Definicje funkcji kerneli
+// Kernel function definitions
 __global__ void bitonicSortStep(int *dev_values, int j, int k, int n);
 __global__ void bitonicCompareAndSwapEven(int *dev_values, int j, int k, int n);
 __global__ void bitonicCompareAndSwapOdd(int *dev_values, int j, int k, int n);
 __global__ void evenSortKernel(int *data, int n);
 __global__ void oddSortKernel(int *data, int n);
 
-// Definicje funkcji pomocniczych
+// Other function definitions
 float bitonicSort(int *values, int n, int **sorted_values);
 float bitonicSortprim(int *values, int n, int **sorted_values);
 float oddEvenSort(int *values, int n, int **sorted_values);
 void printArray(const char *message, int *array, int n);
 
 int main() {
-    const int n = 2048;
+    const int n = 1024;  // num of input always power of 2 
     int values[n], *sorted_values, *sorted_values1, *sorted_values2;
     float time, time1, time2;
 
-    // Generowanie danych wejściowych
+    // Generating input data
     printf("Dane wejściowe:\n");
     for (int i = 0; i < n; i++) {
         values[i] = rand() % (n + i);
@@ -28,22 +29,22 @@ int main() {
     }
     printf("\n");
 
-    // Sortowanie bitoniczne w 2 kernelach
+    // Bitonic sort with 2 kernels
     time = bitonicSortprim(values, n, &sorted_values);
     printf("Czas sortowania bitonicznego w 2 kernelach: %f ms\n", time);
     printArray("Posortowane dane (2 kernele):", sorted_values, n);
 
-    // Sortowanie bitoniczne w 1 kernelu
+    // Bitonic sort with 1 kernel
     time1 = bitonicSort(values, n, &sorted_values1);
     printf("Czas sortowania bitonicznego w 1 kernelu: %f ms\n", time1);
     printArray("Posortowane dane (1 kernel):", sorted_values1, n);
 
-    // Sortowanie odd-even
+    // Odd-even sort
     time2 = oddEvenSort(values, n, &sorted_values2);
     printf("Czas sortowania odd-even: %f ms\n", time2);
     printArray("Posortowane dane (odd-even):", sorted_values2, n);
 
-    // Sprzątanie
+    // Cleanup
     free(sorted_values);
     free(sorted_values1);
     free(sorted_values2);
