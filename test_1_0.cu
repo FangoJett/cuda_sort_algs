@@ -15,38 +15,47 @@ __global__ void bitonicCompareAndSwapEven(int* dev_values, int j, int k, int n);
 __global__ void bitonicCompareAndSwapOdd(int* dev_values, int j, int k, int n);
 __global__ void evenSortKernel(int* data, int n);
 __global__ void oddSortKernel(int* data, int n);
+__global__ void setbucketsKernel(int* input, int* buckets, int* bucketSizes, int numBuckets, int numElements, int maxValue);
+__global__ void sortBucketsKernel(int* buckets, int* bucketSizes, int numBuckets, int numElements);
+__device__ void insertionSort(int* bucket, int size);
+
 
 double count(int* input, int input_size, int sublist_size, int num_sublists, int range, int max_number);
 float bitonicSort(int* values, int n, int** sorted_values);
 float bitonicSortprim(int* values, int n, int** sorted_values);
 float oddEvenSort(int* values, int n, int** sorted_values);
 void printArray(const char* message, int* array, int n);
+float bucketSort(int* input, int n, int maxValue, int** sorted_values);
 
 int main() {
     const int input_size = 1024;
+    int maxvalue = 999;
     std::vector<int> h_input(input_size);
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<> distrib(0, 999);
+    std::uniform_int_distribution<> distrib(0, maxvalue);
 
     for (int i = 0; i < input_size; ++i) {
         h_input[i] = distrib(gen);
     }
-   // Tutaj można wyświetlić listę wejściową
-   //  std::cout << "Unsorted list:\n";
-   // for (int i = 0; i < input_size; i++) {
-   //     std::cout << h_input[i] << ",";
-   //  }
-   // std::cout << "\n\n";
+    // Tutaj można wyświetlić listę wejściową
+    //  std::cout << "Unsorted list:\n";
+    // for (int i = 0; i < input_size; i++) {
+    //     std::cout << h_input[i] << ",";
+    //  }
+    // std::cout << "\n\n";
 
-    // Wykonaj sortowanie przy użyciu funkcji count
+     // Wykonaj sortowanie przy użyciu funkcji count
     double time = count(h_input.data(), input_size, 8, input_size / 8, 10, 999);
     std::cout << "\nSorting time using count algorithm: " << time << " ms\n\n";
-  
 
-    //sortowanie przy użyciu bitonicSort, bitonicSortprim i oddEvenSort
+
+    //sortowanie przy użyciu bitonicSort, bitonicSortprim, oddEvenSort i BucketSort
     int* sorted_values, * sorted_values1, * sorted_values2;
+    int sorted_values3;
     float time1, time2;
+
+
     time = bitonicSortprim(h_input.data(), input_size, &sorted_values);
     //printArray("Sorted list using bitonicSort in 1 kernel:", sorted_values, input_size);
     std::cout << "\n";
@@ -65,8 +74,17 @@ int main() {
     //printArray("Sorted list using bitonicSort:", sorted_values2, input_size);
     std::cout << "\n";
     std::cout << "Sorting time using oddEven algorithm: " << time2 << " ms\n\n";
- 
+
     free(sorted_values2);
+
+    int* sorted_bucketSort;
+    float time_bucketSort = bucketSort(h_input.data(), input_size, maxvalue, &sorted_bucketSort);
+
+    // printArray("Sorted list using BucketSort:", sorted_values_bucketSort, input_size);
+    std::cout << "\nSorting time using BucketSort algorithm: " << time_bucketSort << " ms\n\n";
+
+    free(sorted_bucketSort);
+
 
     return 0;
 }
@@ -125,6 +143,36 @@ __global__ void sortKernel(int* input, int* output, int* counts, int size, int d
     }
 }
 
+__device__ void insertionSort(int* bucket, int size) {
+    for (int i = 1; i < size; i++) {
+        int key = bucket[i];
+        int j = i - 1;
+        while (j >= 0 && bucket[j] > key) {
+            bucket[j + 1] = bucket[j];
+            j = j - 1;
+        }
+        bucket[j + 1] = key;
+    }
+}
+
+__global__ void setbucketsKernel(int* input, int* buckets, int* bucketSizes, int numBuckets, int numElements, int maxValue) {
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx < numElements) {
+        int bucketIndex = (input[idx] * numBuckets) / (maxValue + 1);
+        int index = atomicAdd(&bucketSizes[bucketIndex], 1);
+        buckets[bucketIndex * numElements + index] = input[idx];
+    }
+}
+
+__global__ void sortBucketsKernel(int* buckets, int* bucketSizes, int numBuckets, int numElements) {
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx < numBuckets) {
+        int* bucket = buckets + idx * numElements;
+        int size = bucketSizes[idx];
+        insertionSort(bucket, size);
+    }
+}
+
 
 double count(int* input, int input_size, int sublist_size, int num_sublists, int range, int max_number) {
     int* d_input, * d_counts, * d_output, * d_final_counts;
@@ -166,9 +214,6 @@ double count(int* input, int input_size, int sublist_size, int num_sublists, int
 
     return time;
 }
-
-
-
 
 
 __global__ void bitonicSortStep(int* dev_values, int j, int k, int n) {
@@ -370,4 +415,67 @@ void printArray(const char* message, int* array, int n) {
         printf("%d ", array[i]);
     }
     printf("\n");
+
+
+}
+float bucketSort(int* input, int n, int maxValue, int** sorted_values) {
+    int numBuckets = 10;
+    int* d_input, * d_buckets, * d_bucketSizes;
+    size_t size = n * sizeof(int);
+
+    cudaMalloc(&d_input, size);
+    cudaMalloc(&d_buckets, numBuckets * n * sizeof(int));
+    cudaMalloc(&d_bucketSizes, numBuckets * sizeof(int));
+
+    cudaMemcpy(d_input, input, size, cudaMemcpyHostToDevice);
+    cudaMemset(d_buckets, 0, numBuckets * n * sizeof(int));
+    cudaMemset(d_bucketSizes, 0, numBuckets * sizeof(int));
+
+    cudaEvent_t start, stop;
+    float milliseconds = 0;
+
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+
+    // rodzielanie do kublów
+    int blockSize = 256;
+    int numBlocks = (n + blockSize - 1) / blockSize;
+    setbucketsKernel << < numBlocks, blockSize >> > (d_input, d_buckets, d_bucketSizes, numBuckets, n, maxValue);
+
+    // sortowanie kubłów
+    int bucketsBlockSize = 256;
+    int bucketsNumBlocks = (numBuckets + bucketsBlockSize - 1) / bucketsBlockSize;
+    sortBucketsKernel << < bucketsNumBlocks, bucketsBlockSize >> > (d_buckets, d_bucketSizes, numBuckets, n);
+
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&milliseconds, start, stop);
+
+
+    *sorted_values = (int*)malloc(size);
+
+    // zbieranie danych
+    int* collected_buckets = new int[numBuckets * n];
+    cudaMemcpy(collected_buckets, d_buckets, numBuckets * n * sizeof(int), cudaMemcpyDeviceToHost);
+
+    int* bucketSizes = new int[numBuckets];
+    cudaMemcpy(bucketSizes, d_bucketSizes, numBuckets * sizeof(int), cudaMemcpyDeviceToHost);
+
+    for (int i = 0, k = 0; i < numBuckets; ++i) {
+        for (int j = 0; j < bucketSizes[i]; ++j) {
+            (*sorted_values)[k++] = collected_buckets[i * n + j];
+        }
+    }
+
+    cudaFree(d_input);
+    cudaFree(d_buckets);
+    cudaFree(d_bucketSizes);
+    delete[] collected_buckets;
+    delete[] bucketSizes;
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    return milliseconds;
 }
